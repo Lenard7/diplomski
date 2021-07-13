@@ -28,6 +28,9 @@ class UavExplorationSm:
     self.execution_start = time.time()
     self.confirmed = False
     self.service_called = False
+    self.stop_trajectory = False
+    self.end_simulation = False
+    self.flag_replanning = False
 
     # Initialize ROS params
     # Distance of the UAV from the target pose at which we consider the 
@@ -73,6 +76,10 @@ class UavExplorationSm:
       self.globalPositionCallback, queue_size=1)
     rospy.Subscriber('executing_trajectory', Int32, 
       self.executingTrajectoryCallback, queue_size=1)
+    rospy.Subscriber('exploration/is_replanning', Bool,
+      self.stopTrajectoryCallback, queue_size = 1)
+    rospy.Subscriber('exploration/is_end_simulation', Bool,
+      self.endSimulationCallback, queue_size = 1)
 
     time.sleep(0.2)
 
@@ -86,7 +93,7 @@ class UavExplorationSm:
       time.sleep(1)
     print ("The first pose received. Starting exploration state machine.")
 
-    while not rospy.is_shutdown():
+    while not rospy.is_shutdown() and not self.end_simulation :
 
       # Start state only waits for something to happen
       if self.state == "start":
@@ -94,6 +101,9 @@ class UavExplorationSm:
           self.printStates()
           self.state_previous = "start"
           self.state_pub.publish(self.state)
+
+          print("self.stop_trajectory(is_replanning): ", self.stop_trajectory)
+          print("self.flag_replanning: ", self.flag_replanning)
 
       # Planning the obstacle free trajectory in the map
       if self.state == "plan":
@@ -104,52 +114,91 @@ class UavExplorationSm:
         else: 
           print("Planning again!")
 
-        print ("Calling service!")
-        # Call the obstacle free trajectory planning service
-        request = MultiDofTrajectoryRequest()
-        # Create start point from current position information
-        trajectory_point = JointTrajectoryPoint()
-        trajectory_point.positions = [self.current_reference.transforms[0].translation.x, \
-          self.current_reference.transforms[0].translation.y, \
-          self.current_reference.transforms[0].translation.z, \
-          self.quaternion2Yaw(self.current_reference.transforms[0].rotation)]
-        request.waypoints.points.append(copy.deepcopy(trajectory_point))
-        # Create start point from target position information
-        trajectory_point = JointTrajectoryPoint()
-        trajectory_point.positions = [self.target_pose.position.x, \
-          self.target_pose.position.y, self.target_pose.position.z, \
-          self.quaternion2Yaw(self.target_pose.orientation)]
-        request.waypoints.points.append(copy.deepcopy(trajectory_point))
-        # Set up flags
-        request.publish_path = False
-        request.publish_trajectory = False
-        request.plan_path = True
-        request.plan_trajectory = True
+        if self.stop_trajectory == True and self.flag_replanning == True :
+          print("Trajectory replanned")
+          print("self.stop_trajectory(is_replanning): ", self.stop_trajectory)
+          print("self.flag_replanning: ", self.flag_replanning)
 
-        response = self.plan_trajectory_service.call(request)
-        while not self.service_called and not rospy.is_shutdown():
-          rospy.sleep(0.01)
+          # Call the obstacle free trajectory planning service
+          request = MultiDofTrajectoryRequest()
+          # Create start point from current position information
+          trajectory_point = JointTrajectoryPoint()
+          trajectory_point.positions = [self.current_reference.transforms[0].translation.x, \
+            self.current_reference.transforms[0].translation.y, \
+            self.current_reference.transforms[0].translation.z, \
+            self.quaternion2Yaw(self.current_reference.transforms[0].rotation)]
+          request.waypoints.points.append(copy.deepcopy(trajectory_point))
+          # Create start point from target position information
+          # Starting point is equal to target point
+          trajectory_point = JointTrajectoryPoint()     #current_pose
+          trajectory_point.positions = [self.current_pose.position.x, \
+            self.current_pose.position.y, self.current_pose.position.z, \
+            self.quaternion2Yaw(self.current_pose.orientation)]
+          request.waypoints.points.append(copy.deepcopy(trajectory_point))
+          # Set up flags
+          request.publish_path = False
+          request.publish_trajectory = False
+          #request.plan_path = False
+          request.plan_path = True
+          request.plan_trajectory = True
 
-        self.service_called = False
-        # if trajectory is OK publish it
-        if self.confirmed:
-          # If we did not manage to obtain a successful plan then go to
-          # appropriate state.
-          if response.success == False:
-            print ("**********************************************")
-            print ("In state:", self.state)
-            print ("Path planning failed!")
-            print ("**********************************************")
-            print (" ")
-            self.state = ("end")
-          # If plan was successful then execute it.
-          else:
-            self.trajectory_pub.publish(response.trajectory)
-            self.state = "execute"
-        # if trajectory is not OK, point is reached and go to "start" state
+          response = self.plan_trajectory_service.call(request)
+          #while not self.service_called and not rospy.is_shutdown():
+            #print("10005")
+            #rospy.sleep(0.01)
+
+          self.service_called = False
+          # publish single point as trajectory and stop execution
+          self.trajectory_pub.publish(response.trajectory)
+          self.state = "execute"
+          
         else:
-          self.state = "end"
+          print ("Calling service!")
+          # Call the obstacle free trajectory planning service
+          request = MultiDofTrajectoryRequest()
+          # Create start point from current position information
+          trajectory_point = JointTrajectoryPoint()
+          trajectory_point.positions = [self.current_reference.transforms[0].translation.x, \
+            self.current_reference.transforms[0].translation.y, \
+            self.current_reference.transforms[0].translation.z, \
+            self.quaternion2Yaw(self.current_reference.transforms[0].rotation)]
+          request.waypoints.points.append(copy.deepcopy(trajectory_point))
+          # Create start point from target position information
+          trajectory_point = JointTrajectoryPoint()
+          trajectory_point.positions = [self.target_pose.position.x, \
+            self.target_pose.position.y, self.target_pose.position.z, \
+            self.quaternion2Yaw(self.target_pose.orientation)]
+          request.waypoints.points.append(copy.deepcopy(trajectory_point))
+          # Set up flags
+          request.publish_path = False   
+          request.publish_trajectory = False
+          request.plan_path = True
+          request.plan_trajectory = True
 
+          response = self.plan_trajectory_service.call(request)
+
+          while not self.service_called and not rospy.is_shutdown():
+            rospy.sleep(0.01)
+
+          self.service_called = False
+          # if trajectory is OK publish it
+          if self.confirmed:
+            # If we did not manage to obtain a successful plan then go to
+            # appropriate state.
+            if response.success == False:
+              print ("**********************************************")
+              print ("In state:", self.state)
+              print ("Path planning failed!")
+              print ("**********************************************")
+              print (" ")
+              self.state = ("end")
+            # If plan was successful then execute it.
+            else:
+              self.trajectory_pub.publish(response.trajectory)
+              self.state = "execute"
+          # if trajectory is not OK, point is reached and go to "start" state
+          else:
+            self.state = "end"
 
 
       # While trajectory is executing we check if it is done 
@@ -161,6 +210,11 @@ class UavExplorationSm:
           self.execution_start = time.time()
 
         while not rospy.is_shutdown():      
+          print("self.stop_trajectory(is_replanning): ", self.stop_trajectory)
+          print("self.flag_replanning: ", self.flag_replanning)
+          if self.stop_trajectory:
+            self.state = "end"
+            break
           # When trajectory is executed simply go to end state.
           if self.checkTrajectoryExecuted() == True:
             print ("**********************************************")
@@ -171,8 +225,8 @@ class UavExplorationSm:
             self.state = "end"
             break
           # If we want to send another point anytime
-          if self.state == "plan":
-            break
+          #if self.state == "plan":
+            #break
           rate.sleep()
 
 
@@ -186,9 +240,20 @@ class UavExplorationSm:
 
         time.sleep(0.05)
         # TODO: publish 
-        self.state = "start"
+        if self.stop_trajectory == True and self.flag_replanning == False:
+          self.state = "plan"
+          #self.state = "start"
+          self.flag_replanning = True
+        else:
+          self.state = "start"
+          self.flag_replanning = False
 
       rate.sleep()
+    
+    print ("End of simulation!")
+    print ("**********************************************")
+    print (" ")
+
 
   def printStates(self):
     print ("----------------------------------------------------")
@@ -199,8 +264,9 @@ class UavExplorationSm:
 
   def targetPointCallback(self, msg):
     self.target_pose = msg.pose
-    self.state = "plan"
-    print ("New goal accepted.")
+    if self.flag_replanning == False:
+      self.state = "plan"
+      print ("New goal accepted.")
 
   def globalPositionCallback(self, msg):
     self.current_pose = msg.pose.pose
@@ -222,6 +288,12 @@ class UavExplorationSm:
   def executingTrajectoryCallback(self, msg):
     self.executing_trajectory = msg.data
 
+  def stopTrajectoryCallback(self, msg):
+    self.stop_trajectory = msg.data
+  
+  def endSimulationCallback(self, msg):
+    self.end_simulation = msg.data
+  
   def quaternion2Yaw(self, quaternion):
     q0 = quaternion.w
     q1 = quaternion.x

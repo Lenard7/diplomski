@@ -1,0 +1,44 @@
+	//write appropriate parametars for method trackingGain
+	
+	/*void BestFrontier::trackingGain(point3d m_bestFrontierPoint, octomap::OcTree* octree,  point3d currentPosition, KeySet& Cells) //nadoraditi parametre
+	{
+		std::string gainLine;
+		
+		//std::vector<double> InfGainVector(candidates.size());
+		double BestFrontierInfGain;
+		vector<pair<point3d, point3d>> candidates;
+
+		double x = m_bestFrontierPoint.x();
+		double y = m_bestFrontierPoint.y();
+		double z = m_bestFrontierPoint.z();
+			
+			candidates.push_back(make_pair<point3d, point3d>(point3d(x, y, z), point3d(0.0, 0.0, 0.0)));
+
+
+		// Get bestFrontier information
+			auto currCandidate = candidates[0];
+			double unknownVolume = calcMIBox(octree, currCandidate.first);
+			double tempDistance = calculateDistance(currentPosition, currCandidate.first);
+			double kGain = m_kGain;
+			BestFrontierInfGain = kGain * unknownVolume * exp(- m_lambda * tempDistance);
+
+		std::ofstream gainFileWrite("gainFile.txt");
+		do
+		{
+			//writing to file
+			gainFileWrite << //Gain_of_candidate;
+    		gainFileWrite << "\n";
+
+			//reading from file
+			std::ifstream gainFileRead("gainFile.txt");
+
+			while (std::getline(gainFileRead, gainLine)) {
+        		std::cout << gainLine << "\n";
+    		}
+
+    		gainFileRead.close();
+		
+		} while(1); //TODO: write appropriate condition
+		gainFileWrite.close();
+		
+	} */ //LP

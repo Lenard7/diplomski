@@ -1,6 +1,8 @@
 #ifndef FRONTIER_EXPLORATION_H_
 #define FRONTIER_EXPLORATION_H_
 
+#define CRITICALTOTALGAIN 0.75
+
 #include <uav_frontier_exploration_3d/OctomapServer.h>
 #include <uav_frontier_exploration_3d/BestFrontier.h>
 //Mean shift clustering
@@ -8,6 +10,7 @@
 #include <dlib/clustering.h>
 #include <std_srvs/SetBool.h>
 #include <std_msgs/Int32.h>
+#include <tf2/LinearMath/Quaternion.h>
 
 namespace frontier_server
 {
@@ -78,7 +81,7 @@ namespace frontier_server
       ros::NodeHandle m_nh;
       ros::Publisher m_markerFrontierPub, m_markerClusteredFrontierPub,
         m_bestFrontierPub, m_markerCandidatesPub,m_frontierMapPub, m_uavGoalPub,
-        m_pubEsmState;
+        m_pubEsmState, m_replanning, m_endSimulation;
       ros::Subscriber m_pointReachedSub, m_currentReferenceSub;
 
       octomap::OcTree* m_octree {NULL};
@@ -89,10 +92,12 @@ namespace frontier_server
       unsigned m_treeDepth, m_explorationDepth;
       double m_rate {1}, m_resolution, m_explorationRadius, m_explorationMinX,
         m_explorationMaxX, m_explorationMinY, m_explorationMaxY,m_explorationMinZ,
-        m_explorationMaxZ, m_kernelBandwidth;
+        m_explorationMaxZ, m_kernelBandwidth, m_totalVolume;
 
       bool m_currentGoalReached {true};
       bool m_explorationToggled {false};
+
+      bool m_togglereplanning = true;
 
       string m_configFilename;
       

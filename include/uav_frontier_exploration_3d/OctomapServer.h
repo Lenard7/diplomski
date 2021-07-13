@@ -38,6 +38,9 @@
 #include <stdlib.h>
 #include <math.h>
 
+#include <string>
+#include <iostream>
+
 #include "yaml-cpp/yaml.h"
 
 using namespace std;

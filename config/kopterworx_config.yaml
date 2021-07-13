@@ -225,7 +225,7 @@ state_validity_checker:
     # y_dimension: 2.0
     # z_dimension: 1.0
     # resolution: 0.25
-    x_dimension: 1.25
-    y_dimension: 1.25
-    z_dimension: 1.0
+    x_dimension: 1.5
+    y_dimension: 1.5
+    z_dimension: 1.25
     resolution: 0.25

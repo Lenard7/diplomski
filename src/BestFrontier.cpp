@@ -39,6 +39,7 @@ namespace best_frontier
 		m_kGain = config["exploration"]["k_gain"].as<double>();
 		m_lambda = config["exploration"]["lambda"].as<double>();
 		
+		m_totalVolume = config["exploration"]["volume"].as<double>();
 		return true;
 	}
 
@@ -134,5 +135,69 @@ namespace best_frontier
 		}	
 		return (double)unknownNum / (double)allNum;
 	}
+
+	dataForOutputFile BestFrontier::trackingGain(point3d m_bestFrontierPoint, octomap::OcTree* octree, point3d currentPosition, KeySet& Cells, double prevLeftVolume) 
+	{
+		//std::vector<double> InfGainVector(candidates.size());
+		unsigned m_treeDepth, m_maxTreeDepth;
+		double occVol, freeVol {0};
+		double totalVol, leftVol;
+		double m_totalVol;
+		dataForOutputFile newData;	
+		vector<pair<point3d, point3d>> candidates;
+		double x = m_bestFrontierPoint.x();
+		double y = m_bestFrontierPoint.y();
+		double z = m_bestFrontierPoint.z();
+	
+		m_treeDepth = octree->getTreeDepth();
+		m_maxTreeDepth = m_treeDepth;
+
+		for (OcTree::leaf_iterator it = octree->begin_leafs(), 
+			end = octree->end_leafs(); it != end; ++it)
+			{
+				double voxelSize = octree->getNodeSize(m_maxTreeDepth);
+				if(octree->isNodeOccupied(*it))
+					occVol += pow(voxelSize, 3);
+				else
+					freeVol += pow(voxelSize, 3);		
+		}
+		totalVol = m_totalVolume;
+		leftVol = totalVol - (occVol + freeVol);
+
+		newData.leftVolume = leftVol;
+			
+		candidates.push_back(make_pair<point3d, point3d>(point3d(x, y, z), point3d(0.0, 0.0, 0.0)));
+
+		// Get bestFrontier information
+		auto currCandidate = candidates[0];
+		newData.unknVolume = calcMIBox(octree, currCandidate.first);
+		newData.tempDistance = calculateDistance(currentPosition, currCandidate.first);
+		double kGain = m_kGain;
+		newData.InfGain = kGain * newData.unknVolume * exp(- m_lambda * newData.tempDistance);
+
+		std::string gainLine;
+		std::ofstream gainFileWrite;
+    	gainFileWrite.open("gainFile.csv", std::ofstream::app);
+		
+		gainFileWrite << newData.InfGain << ", "; //Gain_of_candidate;
+    	gainFileWrite << newData.tempDistance << ", "; //temp_distance
+		gainFileWrite << newData.unknVolume << ", "; //percentage of unknown volume
+
+		//if current left volume is larger then previous left volume, print previous left volume
+		if(newData.leftVolume < prevLeftVolume) { //printing left volume in descending order
+			gainFileWrite << newData.leftVolume << "\n"; //left volume
+			newData.previousLeftVolume = newData.leftVolume;
+		} else {
+			gainFileWrite << prevLeftVolume << "\n"; 
+		}
+		
+
+		//reading from file
+		std::ifstream gainFileRead("gainFile.csv");
+
+    	gainFileRead.close();
+		gainFileWrite.close();
+		return newData;
+	} 
 
 }   

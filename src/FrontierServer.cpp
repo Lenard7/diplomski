@@ -35,6 +35,8 @@ namespace frontier_server
 		m_uavGoalPub = m_nh.advertise<
 			geometry_msgs::PoseStamped>("exploration/goal", 1, false);
 		m_pubEsmState = m_nh.advertise<std_msgs::Int32>("exploration/state", 1);
+		m_replanning = m_nh.advertise <std_msgs::Bool>("exploration/is_replanning", 1, false);
+		m_endSimulation = m_nh.advertise <std_msgs::Bool>("exploration/is_end_simulation", 1, false);
 
 		// Initialize subscribers
 		m_pointReachedSub = m_nh.subscribe("point_reached", 1, 
@@ -80,6 +82,9 @@ namespace frontier_server
 		m_treeDepth = config["octomap"]["octree_depth"].as<unsigned>();
 
 		m_kernelBandwidth = config["clustering"]["kernel_bandwidth"].as<double>();
+
+		m_totalVolume = config["exploration"]["volume"].as<double>();
+
 		return true;
 	}
 
@@ -403,8 +408,12 @@ namespace frontier_server
 
 	void FrontierServer::run()
 	{
+		bool is_replanning = false;
+		bool is_endSimulation = false;
 		ros::Rate loopRate(m_rate);
 		setStateAndPublish(ExplorationState::OFF);
+		dataForOutputFile datafile;
+		datafile.previousLeftVolume = m_totalVolume;
 
 		while (ros::ok())
 		{
@@ -412,15 +421,24 @@ namespace frontier_server
 			ros::spinOnce();
 			// Initialize before switch
 			KeySet globalFrontierCells;
+			point3d currentPoint3d(m_uavCurrentPose.position.x, 
+						m_uavCurrentPose.position.y, m_uavCurrentPose.position.z);
+			std_msgs::Bool is_replanningMsg;
+			std_msgs::Bool is_endSimulationMsg;
+
 			switch (m_currentState)
 			{
 				case ExplorationState::OFF:
-					if(m_explorationToggled)
+					if(m_explorationToggled) {
 						setStateAndPublish(ExplorationState::CHECKFORFRONTIERS);
+						m_explorationToggled = false;
+					}
 					break;
 
 				case ExplorationState::CHECKFORFRONTIERS:
+					is_replanning = false;
 					m_octomapServer.runDefault();
+					//publishing volume
 					m_octomapServer.publishVolume();
 					m_uavCurrentPose = m_octomapServer.getCurrentUAVPosition();
 					if(!m_currentGoalReached)
@@ -435,12 +453,37 @@ namespace frontier_server
 						setStateAndPublish(ExplorationState::ON);
 					break;
 
-				case ExplorationState::ON:
+				case ExplorationState::ON:					
+					datafile = m_bestFrontierServer.trackingGain(m_bestFrontierPoint, m_octree, currentPoint3d, m_clusteredCellsUpdated, datafile.previousLeftVolume);
+					if (datafile.leftVolume <= 0) {
+						is_endSimulation = true;
+						is_endSimulationMsg.data = is_endSimulation;
+						m_endSimulation.publish(is_endSimulationMsg);
+						ROS_INFO("Simualtion end");
+						m_logfile << "SIMULATION_END";
+						cout << "SIMULATION_END";
+						setStateAndPublish(ExplorationState::OFF);
+						//ros::shutdown();
+						break;
+					}
+					
+					if (datafile.InfGain >= 4 * CRITICALTOTALGAIN) {
+						m_togglereplanning = true;
+					}
+
 					globalFrontierCells = findFrontier(m_changedCells);
 					// Delete frontiers that are explored now
 					updateGlobalFrontier(globalFrontierCells);	
 					// Find frontiers on the upper level (m_explorationDepth) and publish it
 					searchForParentsAndPublish();
+
+					if ((datafile.InfGain <= CRITICALTOTALGAIN) && (m_togglereplanning == true)) {
+						is_replanning = true;
+						m_togglereplanning = false;
+						setStateAndPublish(ExplorationState::POINTREACHED);
+						break;
+					}
+
 					// If there is no parents switch to CHECKFORFRONTIERS
 					if (!m_parentFrontierCells.size() > 0) 
 						setStateAndPublish(ExplorationState::CHECKFORFRONTIERS);
@@ -452,27 +495,49 @@ namespace frontier_server
 					break;
 
 				case ExplorationState::POINTREACHED:
-					// Find Best Frontier
-					m_currentGoalReached = false;
-					// Delete candidates that are too close to prevoius assigned points
+					std::ofstream gainFileWrite;
+    				gainFileWrite.open("gainFile.csv", std::ofstream::app);
+
+					//writing to file when goal is reached
+					gainFileWrite << 0 << ", " << 0 << ", " << 0 << ", " <<datafile.previousLeftVolume <<"\n";
+					gainFileWrite.close();
+
+
+					if (!is_replanning) {
+						// Find Best Frontier
+						m_currentGoalReached = false;
+						// Delete candidates that are too close to prevoius assigned points
+						clusterFrontierAndPublish();
+						// Simulation bag
+						m_bestFrontierPoint = 
+								m_bestFrontierServer.bestFrontierInfGain(m_octree, currentPoint3d, m_clusteredCellsUpdated);								
+						// m_bestFrontierPoint = 
+						// 	m_bestFrontierServer.closestFrontier(m_octree, currentPoint3d, m_clusteredCellsUpdated);
+						m_logfile << "Best frontier: " << m_bestFrontierPoint << endl;
 					
-					clusterFrontierAndPublish();
-					point3d currentPoint3d(m_uavCurrentPose.position.x, 
-						m_uavCurrentPose.position.y, m_uavCurrentPose.position.z);
-					// Simulation bag
-					m_bestFrontierPoint = 
-							m_bestFrontierServer.bestFrontierInfGain(m_octree, currentPoint3d, m_clusteredCellsUpdated);
-					// m_bestFrontierPoint = 
-					// 	m_bestFrontierServer.closestFrontier(m_octree, currentPoint3d, m_clusteredCellsUpdated);
-					m_logfile << "Best frontier: " << m_bestFrontierPoint << endl;
-					
-					m_allUAVGoals.push_back(m_bestFrontierPoint);
-					cout << "Best frontier: " << m_bestFrontierPoint << endl;
-					publishBestFrontier();
-					publishUAVGoal(m_bestFrontierPoint);
+						m_allUAVGoals.push_back(m_bestFrontierPoint);
+						cout << "Best frontier: " << m_bestFrontierPoint << endl;
+						publishBestFrontier();
+
+						is_replanningMsg.data = is_replanning;
+						m_replanning.publish(is_replanningMsg);
+
+						publishUAVGoal(m_bestFrontierPoint);
+					} else {
+						m_logfile << "Replanned frontier: " << currentPoint3d << endl;
+						//Removing last goal, it was replanned
+						m_allUAVGoals.pop_back();
+						m_allUAVGoals.push_back(currentPoint3d);
+
+						is_replanningMsg.data = is_replanning;
+						m_replanning.publish(is_replanningMsg);
+
+						publishUAVGoal(currentPoint3d);
+					}
+
+
 					ros::Duration(0.05).sleep();
 					setStateAndPublish(ExplorationState::CHECKFORFRONTIERS);
-					// }
 					break;
 			}
 			ros::WallTime currentTime = ros::WallTime::now();
@@ -653,6 +718,11 @@ namespace frontier_server
 
 	void FrontierServer::publishUAVGoal(point3d goal)
 	{
+		double yaw;
+		tf2::Quaternion quaternionRotation;
+		point3d currentPoint3d(m_uavCurrentPose.position.x, 
+			m_uavCurrentPose.position.y, m_uavCurrentPose.position.z);
+
 		// // Make sure that point is in the bounding box
 		if (goal.x() < m_explorationMinX || 
 			goal.x() > m_explorationMaxX ||
@@ -673,10 +743,15 @@ namespace frontier_server
 		m_goal.pose.position.x = goal.x();
 		m_goal.pose.position.y = goal.y();
 		m_goal.pose.position.z = goal.z();
-		m_goal.pose.orientation.x = 0;
-		m_goal.pose.orientation.y = 0;
-		m_goal.pose.orientation.z = 0;
-		m_goal.pose.orientation.w = 1;
+		
+		yaw = atan2((m_goal.pose.position.y - currentPoint3d.y() ), (m_goal.pose.position.x - currentPoint3d.x() ));
+		quaternionRotation.setRPY(0,0,yaw);
+		quaternionRotation = quaternionRotation.normalize();
+
+		m_goal.pose.orientation.x = quaternionRotation.getX();
+		m_goal.pose.orientation.y = quaternionRotation.getY();
+		m_goal.pose.orientation.z = quaternionRotation.getZ();
+		m_goal.pose.orientation.w = quaternionRotation.getW();
 
 		m_uavGoalPub.publish(m_goal);
 		ROS_WARN_STREAM(goal.x() << " " << goal.y() << " " << goal.z() << " -> Goal published!");
